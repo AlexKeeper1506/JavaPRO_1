@@ -17,6 +17,8 @@ public class TestRunner {
 
         Map<Integer, Method> testMethods = getTestMethods(methods);
 
+        Method method;
+
         //Предполагаем, что у класса есть конструктор без параметров (не знаю как это проверить)
         Constructor<?> constructor = c.getConstructor();
         Object object = constructor.newInstance();
@@ -25,12 +27,27 @@ public class TestRunner {
         if (beforeSuiteMethod != null) beforeSuiteMethod.invoke(object);
 
         List<Integer> priorityList = new ArrayList<>(testMethods.keySet());
-        Collections.sort(priorityList);
+        Collections.reverse(priorityList);
 
-        //Предполагаем, что все методы с аннотациями Test, BeforeTest и AfterTest не имеют входных параметров (не знаю как это проверить)
+        //Предполагаем, что методы с аннотациями BeforeTest и AfterTest не имеют входных параметров (не знаю как это проверить)
+        //Методы с аннотацией Test проверяем на параметры с помощью аннотации CsvSource. При её отсутствии параметров нет
         for (Integer priority : priorityList) {
             if (beforeTestMethod != null) beforeTestMethod.invoke(object);
-            testMethods.get(priority).invoke(object);
+
+            method = testMethods.get(priority);
+            if (method.isAnnotationPresent(CsvSource.class)) {
+                String[] parameterValues = method.getDeclaredAnnotation(CsvSource.class).value().split(", ");
+                Class<?>[] parameterTypes = method.getParameterTypes();
+
+                int length = parameterValues.length;
+                if (length != parameterTypes.length) throw new RuntimeException("Количество аргументов, переданных в аннотации CsvSource, не соответствует реальному количеству аргументов");
+
+                Object[] parameters = new Object[length];
+                for (int i = 0; i < length; i++) parameters[i] = toObject(parameterTypes[i], parameterValues[i]);
+
+                method.invoke(object, parameters);
+            } else method.invoke(object);
+
             if (afterTestMethod != null) afterTestMethod.invoke(object);
         }
 
@@ -57,13 +74,14 @@ public class TestRunner {
     }
 
     private static Map<Integer, Method> getTestMethods(Method[] methods) {
+        int priority;
         Map<Integer, Method> resultMethods = new HashMap<>();
 
         for (Method method : methods) {
             if (method.isAnnotationPresent(Test.class)) {
                 if (Modifier.isStatic(method.getModifiers())) throw new RuntimeException("Аннотацию Test можно использовать только на нестатических методах");
 
-                Integer priority = method.getDeclaredAnnotation(Test.class).priority();
+                priority = method.getDeclaredAnnotation(Test.class).value();
                 if (priority < 1 || priority > 10) throw new RuntimeException("Приоритет метода должен быть в пределах от 1 до 10");
 
                 while (resultMethods.containsKey(priority)) priority++;
@@ -72,5 +90,11 @@ public class TestRunner {
         }
 
         return resultMethods;
+    }
+
+    private static Object toObject(Class<?> clazz, String value) {
+        if (boolean.class == clazz) return Boolean.parseBoolean(value);
+        if (int.class == clazz) return Integer.parseInt(value);
+        return value;
     }
 }
